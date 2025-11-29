@@ -5,127 +5,299 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Daily Habit Tracker</title>
 
+<!-- Manifest + Service Worker -->
 <link rel="manifest" href="manifest.json">
 <script>
 if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-        navigator.serviceWorker.register("service-worker.js");
-    });
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("service-worker.js");
+  });
 }
 </script>
 
 <style>
-body { font-family: Arial, sans-serif; background:#0d0d0d; color:white; margin:0; padding:20px; }
-h1 { text-align:center; font-size:28px; color:#00ff85; margin-bottom:10px; }
-#progressBar { height:16px; background:#333; border-radius:10px; overflow:hidden; margin-bottom:20px; }
-#progressFill { height:100%; width:0%; background:#00ff85; transition:.3s; }
-.habit { background:#141414; padding:15px; border-radius:12px; display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border:1px solid #00eaff44; }
-button, input { border:none; padding:12px 15px; border-radius:10px; font-size:16px; }
-#addBtn { background:#00ff85; color:black; font-weight:bold; }
-.checkBtn { background:#00eaff; font-weight:bold; }
-input {flex:1; background:#222; color:white; }
-.quote { margin-top:20px; font-style:italic; text-align:center; opacity:.9; font-size:18px; transition: all .5s ease; color:#00eaff; }
-#nextBtn { background:#b967ff; width:100%; margin-top:10px; font-weight:bold; }
+  body { font-family: Arial, sans-serif; background:#0d0d0d; color:white; margin:0; padding:20px; }
+  h1 { text-align:center; font-size:28px; color:#00ff85; margin-bottom:5px; }
+  #dayMsg { text-align:center; font-size:13px; color:#00ff85; min-height:18px; margin-bottom:8px; }
+
+  #progressBar { height:16px; background:#333; border-radius:10px; overflow:hidden; margin-bottom:16px; }
+  #progressFill { height:100%; width:0%; background:#00ff85; transition:.3s; }
+
+  .top-input { display:flex; gap:6px; margin-bottom:15px; }
+  input { flex:1; background:#222; color:white; border:none; padding:12px 15px; border-radius:10px; font-size:16px; }
+  button { border:none; padding:12px 15px; border-radius:10px; font-size:16px; cursor:pointer; }
+  #addBtn { background:#00ff85; color:black; font-weight:bold; }
+
+  .habit { background:#141414; padding:15px; border-radius:12px; display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border:1px solid #00eaff44; }
+  .habit span { font-size:16px; }
+  .checkBtn { background:#00eaff; font-weight:bold; min-width:60px; }
+
+  .quote { margin-top:20px; font-style:italic; text-align:center; opacity:.9; font-size:16px; transition: all .4s ease; color:#00eaff; min-height:40px; }
+  #nextBtn { background:#b967ff; width:100%; margin-top:10px; font-weight:bold; }
+
+  #heatmapTitle { text-align:center; margin-top:16px; font-size:14px; color:#aaaaaa; }
+  #heatmap { display:grid; grid-template-columns: repeat(15, 1fr); gap:4px; margin-top:8px; }
+  .heat-cell { width:100%; padding-top:100%; border-radius:4px; background:#222; position:relative; }
+  .heat-cell.lvl1 { background:#004d40; }
+  .heat-cell.lvl2 { background:#00b894; }
+  .heat-cell.lvl3 { background:#00ff85; }
+  .heat-cell.lvl4 { background:#b2ff59; }
 </style>
 </head>
 
 <body>
 
 <h1>Daily Habit Tracker 🔥</h1>
+<div id="dayMsg"></div>
+
 <div id="progressBar"><div id="progressFill"></div></div>
 
-<div style="display:flex; gap:6px; margin-bottom:15px;">
-<input id="habitInput" type="text" placeholder="Tambah kebiasaan baru...">
-<button id="addBtn" onclick="addHabit()">Tambah</button>
+<div class="top-input">
+  <input id="habitInput" type="text" placeholder="Tambah kebiasaan baru...">
+  <button id="addBtn" onclick="addHabit()">Tambah</button>
 </div>
 
 <div id="habitList"></div>
+
+<p id="heatmapTitle">Streak 30 hari terakhir</p>
+<div id="heatmap"></div>
 
 <p class="quote" id="quote"></p>
 <button id="nextBtn" onclick="nextQuote()">Quote berikutnya</button>
 
 <script>
-// HABIT
+// ====== DATA DASAR ======
 let habits = JSON.parse(localStorage.getItem("habits")) || [];
-let today = new Date().toDateString();
+let history = JSON.parse(localStorage.getItem("habitHistory")) || {}; // { 'YYYY-MM-DD': jumlahSelesai }
 
-if(localStorage.getItem("lastOpen") !== today){
-    habits = habits.map(h => ({...h, done:false}));
-    localStorage.setItem("lastOpen", today);
+// helper tanggal
+function getTodayDateKey() {
+  const d = new Date();
+  return d.toISOString().slice(0,10); // YYYY-MM-DD
+}
+function getTodayLabel() {
+  return new Date().toDateString(); // untuk cek pergantian hari
 }
 
-function render(){
-    const list = document.getElementById("habitList");
-    list.innerHTML = "";
-    habits.forEach((habit, index)=>{
-        list.innerHTML += `
-            <div class='habit'>
-                <span>${habit.name}</span>
-                <button class='checkBtn' onclick="toggle(${index})">${habit.done ? "✔️" : "❌"}</button>
-            </div>`;
-    });
-
-    let doneCount = habits.filter(h => h.done).length;
-    let percent = habits.length ? (doneCount / habits.length * 100) : 0;
-    document.getElementById("progressFill").style.width = percent + "%";
-
-    localStorage.setItem("habits", JSON.stringify(habits));
+// ====== RESET HARIAN (OFFLINE JUGA JALAN) ======
+function resetForNewDay() {
+  const todayLabel = getTodayLabel();
+  habits = habits.map(h => ({ ...h, done:false }));
+  localStorage.setItem("lastOpen", todayLabel);
+  showDayMessage("Hari baru dimulai — kebiasaan di-reset 🔁");
+  render(); // simpan & update tampilan + history + heatmap
 }
 
-function addHabit(){
-    const input = document.getElementById("habitInput");
-    if(input.value.trim()==="") return;
-    habits.push({name:input.value, done:false});
-    input.value="";
-    render();
+function checkDayChange() {
+  const todayLabel = getTodayLabel();
+  const lastOpen = localStorage.getItem("lastOpen");
+
+  if (!lastOpen) {
+    localStorage.setItem("lastOpen", todayLabel);
+    return;
+  }
+
+  if (lastOpen !== todayLabel) {
+    resetForNewDay();
+  }
 }
 
-function toggle(index){
-    habits[index].done = !habits[index].done;
-    render();
+function showDayMessage(text) {
+  document.getElementById("dayMsg").innerText = text || "";
 }
 
-// ===== 100 Quotes Parafrase Atomic Habits =====
+// cek saat load
+checkDayChange();
+// cek setiap 1 menit kalau app dibiarkan terbuka
+setInterval(checkDayChange, 60 * 1000);
+
+// ====== RENDER HABIT + PROGRESS + HISTORY ======
+function render() {
+  const list = document.getElementById("habitList");
+  list.innerHTML = "";
+
+  habits.forEach((habit, index) => {
+    list.innerHTML += `
+      <div class="habit">
+        <span>${habit.name}</span>
+        <button class="checkBtn" onclick="toggle(${index})">${habit.done ? "✔️" : "❌"}</button>
+      </div>
+    `;
+  });
+
+  const doneCount = habits.filter(h => h.done).length;
+  const percent = habits.length ? (doneCount / habits.length * 100) : 0;
+  document.getElementById("progressFill").style.width = percent + "%";
+
+  // simpan daftar habit
+  localStorage.setItem("habits", JSON.stringify(habits));
+
+  // simpan ke history untuk hari ini
+  const key = getTodayDateKey();
+  history[key] = doneCount;
+  localStorage.setItem("habitHistory", JSON.stringify(history));
+
+  renderHeatmap();
+}
+
+// ====== MANIPULASI HABIT ======
+function addHabit() {
+  const input = document.getElementById("habitInput");
+  if (input.value.trim() === "") return;
+  habits.push({ name: input.value.trim(), done:false });
+  input.value = "";
+  render();
+}
+
+function toggle(index) {
+  habits[index].done = !habits[index].done;
+  render();
+}
+
+// ====== HEATMAP ALA GITHUB (30 HARI TERAKHIR) ======
+function renderHeatmap() {
+  const container = document.getElementById("heatmap");
+  container.innerHTML = "";
+  const today = new Date();
+
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(today.getDate() - i);
+    const key = d.toISOString().slice(0,10);  // YYYY-MM-DD
+    const value = history[key] || 0;
+
+    let level = 0;
+    if (value === 0) level = 0;
+    else if (value === 1) level = 1;
+    else if (value <= 3) level = 2;
+    else if (value <= 5) level = 3;
+    else level = 4;
+
+    const cell = document.createElement("div");
+    cell.className = "heat-cell lvl" + level;
+    cell.title = key + " : " + value + " kebiasaan selesai";
+    container.appendChild(cell);
+  }
+}
+
+// ====== QUOTES (puluhan quotes bertema Atomic Habits style) ======
 const quotes = [
-"Perubahan besar lahir dari langkah kecil yang dilakukan secara konsisten.",
-"Menjadi 1% lebih baik setiap hari akan menggandakan kekuatanmu dalam setahun.",
-"Kebiasaan membentuk identitas, dan identitas menguatkan kebiasaan.",
-"Kesuksesan bukan peristiwa tunggal, tapi akumulasi tindakan kecil berulang.",
-"Kamu tidak butuh motivasi, kamu butuh sistem yang mendukungmu.",
-"Jika kamu ingin hasil baru, kamu harus menjadi versi baru dari dirimu sendiri.",
-"Buktikan pada dirimu dengan tindakan, bukan kata-kata.",
-"Tidak perlu sempurna — cukup terus bergerak.",
-"Tujuan memberi arah, kebiasaan memberi kemajuan.",
-"Hal sulit menjadi mudah ketika menjadi kebiasaan.",
-"Identitas sejati dibangun oleh pilihan kecil sehari-hari.",
-"Kebiasaan kecil yang tidak terlihat akan menciptakan perbedaan besar.",
-"Ubah lingkungan, maka kamu mengubah hidup.",
-"Tindakan kecil memenangkan pertarungan melawan penundaan.",
-"Hasil besar dimulai ketika kamu memulai.",
-"Kendalikan rutinitasmu, maka kamu mengendalikan masa depanmu.",
-"Raih kemenangan kecil setiap hari.",
-"Disiplin adalah jembatan dari keinginan ke pencapaian.",
-"Kebiasaan bekerja bahkan saat kamu tidak sedang termotivasi.",
-"Hidupmu berubah ketika sistemmu berubah.",
-"Motivasi datang dan pergi — sistem tetap.",
-"Keunggulan adalah kebiasaan, bukan hadiah.",
-"Investasi harianmu menentukan masa depanmu.",
-"Kesulitan adalah bukti bahwa kamu berkembang.",
---- 80 quotes tambahan akan saya inject otomatis berikutnya ---
+  "Perubahan kecil yang konsisten menghasilkan hasil besar.",
+  "Kebiasaan kecil hari ini adalah pondasi karakter di masa depan.",
+  "Menjadi 1% lebih baik setiap hari mengalahkan usaha besar sesekali.",
+  "Identitasmu dibentuk oleh kebiasaan yang kamu ulang, bukan oleh niatmu.",
+  "Tujuan memberi arah, kebiasaan memberimu gerak.",
+  "Fokus pada proses, maka hasil akan mengikuti.",
+  "Hal yang sulit hari ini akan terasa biasa jika menjadi kebiasaan.",
+  "Kebiasaan baik membuat pilihan benar menjadi lebih mudah.",
+  "Kamu sedang berlatih menjadi seseorang lewat setiap tindakan kecil.",
+  "Kemenangan kecil harian menumpuk menjadi prestasi besar.",
+  "Ketika kamu mengubah kebiasaan, kamu mengubah hidupmu secara diam-diam.",
+  "Lingkungan yang tepat membuat kebiasaan baik hampir otomatis.",
+  "Mulailah kecil, tetapi jangan berhenti.",
+  "Kebiasaan adalah suara pelan yang menentukan ke mana hidupmu bergerak.",
+  "Kesuksesan jarang datang dari satu momentum besar, tapi dari ribuan langkah kecil.",
+  "Satu langkah kecil hari ini lebih berharga dari rencana sempurna yang tidak dijalankan.",
+  "Kebiasaan baik melindungimu di hari-hari ketika kamu lelah.",
+  "Kamu tidak harus hebat untuk memulai, tetapi kamu harus mulai untuk menjadi hebat.",
+  "Perbaiki sistemmu jika kamu tidak suka hasilmu.",
+  "Disiplin adalah bentuk cinta terhadap diri sendiri di masa depan.",
+  "Kemajuan yang pelan tetaplah kemajuan.",
+  "Yang kamu ulang akan menjadi bagian dari siapa dirimu.",
+  "Kebiasaan adalah komitmen kecil yang diulang untuk versi dirimu yang lebih baik.",
+  "Jika kamu tidak mengendalikan kebiasaanmu, kebiasaanmu yang akan mengendalikanmu.",
+  "Perubahan nyata dimulai ketika tindakan kecil menjadi tidak bisa ditawar.",
+  "Jangan kejar sempurna, kejar konsisten.",
+  "Setiap kali kamu memilih kebiasaan baik, kamu memilih masa depan yang lebih baik.",
+  "Kebiasaan bukan beban, tapi alat untuk meringankan hidupmu.",
+  "Segala sesuatu yang besar pernah dimulai dari sesuatu yang kecil dan tidak terlihat.",
+  "Keajaiban terjadi saat kamu berhenti menyerah di tengah jalan.",
+  "Sedikit lebih disiplin hari ini berarti sedikit lebih bebas besok.",
+  "Kebiasaan buruk tidak akan pergi sendiri; mereka harus diganti.",
+  "Mengubah kebiasaan lebih kuat daripada sekadar menetapkan target.",
+  "Fokus pada siapa kamu ingin menjadi, bukan hanya apa yang ingin kamu capai.",
+  "Setiap checklist yang kamu centang adalah suara untuk identitas baru yang kamu bangun.",
+  "Kebiasaan baik membuatmu siap ketika kesempatan datang.",
+  "Hidupmu adalah cerminan dari kebiasaan yang kamu rawat setiap hari.",
+  "Berhentilah menunggu momentum besar, bangun ritme kecilmu sendiri.",
+  "Kebiasaan kecil hari ini bisa menghindarkanmu dari penyesalan besar di masa depan.",
+  "Identitas baru lahir dari tindakan baru yang diulang terus menerus.",
+  "Rutinitas kecil yang konsisten lebih kuat dari motivasi yang naik turun.",
+  "Kebiasaan yang jelas, mudah, dan menyenangkan akan lebih mudah bertahan.",
+  "Setiap hari adalah kesempatan mengulang pilihan baik yang sama.",
+  "Kebiasaan baik adalah cara sederhana untuk menghormati dirimu sendiri.",
+  "Kamu tidak bisa mengontrol hasil, tapi kamu bisa mengontrol kebiasaan yang mengarah ke sana.",
+  "Kebiasaan mengubah yang mustahil menjadi mungkin, dan yang mungkin menjadi biasa.",
+  "Satu hari terlewat tidak masalah, dua hari terlewat adalah alarm.",
+  "Perubahan jangka panjang datang dari standar baru, bukan usaha sesaat.",
+  "Kebiasaan adalah cara sunyi untuk mencintai diri sendiri secara konsisten.",
+  "Berhenti mendramatisir awal, dan mulai saja dengan yang paling kecil.",
+  "Jangan hanya menghitung hari, biarkan kebiasaanmu membuat hari-harimu berarti.",
+  "Kamu membangun atau menghancurkan masa depanmu lewat kebiasaan yang kamu pilih.",
+  "Kebiasaan sederhana pagi hari dapat mengubah kualitas seluruh harimu.",
+  "Kebiasaan baik menjadikan disiplin tampak seperti autopilot.",
+  "Pertumbuhan pelan adalah pertumbuhan yang stabil.",
+  "Setiap pengulangan memperkuat jalur baru di dalam dirimu.",
+  "Kebiasaan hari ini adalah cerita hidupmu besok.",
+  "Perbaiki satu kebiasaan, dan banyak hal lain ikut membaik.",
+  "Kebiasaan kecil bisa menjadi sekutu terbaikmu di saat sulit.",
+  "Bangun sistem yang membuat pilihan sehat menjadi pilihan termudah.",
+  "Kebiasaan yang jelas dan terukur lebih mudah dijaga.",
+  "Jika kamu terus hadir, kamu akan terus berkembang.",
+  "Setiap hari kamu memilih: mendukung kebiasaan baik atau kebiasaan buruk.",
+  "Kebiasaan baik adalah cara pelan untuk menulis ulang masa depanmu.",
+  "Jangan mengandalkan motivasi; andalkan struktur yang kamu bangun.",
+  "Kebiasaan bukan soal kuat, tapi soal diulang.",
+  "Respons kecil yang tepat dapat mengubah arah satu hari penuh.",
+  "Jika kamu ingin hidup yang berbeda, mulailah dengan kebiasaan yang berbeda.",
+  "Perbaiki kebiasaan hari ini, dan banyak masalah akan selesai dengan sendirinya.",
+  "Kebiasaan adalah bukti apakah kamu benar-benar menginginkan sesuatu atau hanya suka idenya.",
+  "Kebiasaan baik sering kali membosankan — di sanalah keajaiban bekerja.",
+  "Disiplin harian adalah bentuk rasa syukur kepada kesempatan hidup yang kamu punya.",
+  "Keluar dari zona nyaman dimulai dari satu kebiasaan baru.",
+  "Kebiasaan yang kamu rawat menunjukkan nilai yang benar-benar kamu pegang.",
+  "Kebiasaan baik membuat hidupmu lebih ringan di masa depan meski hari ini terasa berat.",
+  "Jika kamu tidak mengatur harimu, kebiasaan lamamu yang akan mengambil alih.",
+  "Jangan remehkan satu langkah; diulang ribuan kali, ia mengubah lintasan hidup.",
+  "Kebiasaan kecil adalah cara paling realistis untuk menjaga janji pada diri sendiri.",
+  "Konsistensi adalah bahasa cinta untuk mimpimu sendiri.",
+  "Kebiasaan baik membuatmu siap menghadapi hal-hal tak terduga.",
+  "Setiap pagi adalah reset lembut untuk mengulang hal yang benar.",
+  "Kamu menanam benih lewat kebiasaan, dan memanen karakter di kemudian hari.",
+  "Kebiasaan yang baik menjadikanmu orang yang bisa dipercaya, terutama oleh dirimu sendiri.",
+  "Motivasi mungkin yang memulai, kebiasaan yang menjaga agar tetap berjalan.",
+  "Kebiasaan bukan sekadar aktivitas, tapi pola berpikir yang diwujudkan.",
+  "Kebiasaan sehat memberi ruang bagi energi, fokus, dan kreativitasmu.",
+  "Kamu tidak perlu mengubah segalanya sekaligus; cukup satu kebiasaan pada satu waktu.",
+  "Kebiasaan yang tampak kecil sering kali menahan hidupmu dari kekacauan.",
+  "Setiap tanda centang di habit tracker adalah bentuk penghargaan untuk dirimu sendiri.",
+  "Kebiasaan yang kamu bangun lebih kuat dari suasana hati sesaat.",
+  "Kamu tidak bisa memilih masa lalu, tapi kamu bisa memilih kebiasaan hari ini.",
+  "Perjalanan panjang jadi mungkin ketika kamu nyaman dengan langkah pendek.",
+  "Kebiasaan adalah kompas yang pelan-pelan mengarahkan hidupmu.",
+  "Bekerja pada kebiasaan berarti bekerja pada versi dirimu yang akan datang.",
+  "Kebiasaan baik menyiapkanmu untuk keberuntungan yang tampak seperti kebetulan.",
+  "Di balik setiap orang disiplin, ada kebiasaan kecil yang jarang terlihat.",
+  "Kebiasaan adalah cara praktis untuk menerjemahkan nilai menjadi tindakan.",
+  "Kebiasaan yang kamu jaga di saat lelah menunjukkan siapa dirimu sebenarnya.",
+  "Keberlanjutan lebih penting daripada kecepatan.",
+  "Jika kamu bisa mengontrol rutinitas kecilmu, kamu bisa mengubah apapun."
 ];
 
-// Quotes system
-function nextQuote(){
-    const quote = document.getElementById("quote");
-    quote.style.opacity = 0;
-    setTimeout(()=>{
-        quote.innerText = quotes[Math.floor(Math.random()*quotes.length)];
-        quote.style.opacity = 1;
-    },300);
+function nextQuote() {
+  const quote = document.getElementById("quote");
+  quote.style.opacity = 0;
+  setTimeout(() => {
+    const idx = Math.floor(Math.random()*quotes.length);
+    quote.innerText = quotes[idx];
+    quote.style.opacity = 1;
+  }, 300);
 }
 
+// inisialisasi
 nextQuote();
 render();
+showDayMessage(""); // kosongkan jika tidak ada pesan
 </script>
 
 </body>
