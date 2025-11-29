@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily Habit Tracker</title>
+
+<style>
+body { font-family: Arial, sans-serif; background:#0d0d0d; color:white; margin:0; padding:20px; }
+h1 { text-align:center; font-size:28px; color:#00ff85; margin-bottom:10px; }
+#progressBar { height:16px; background:#333; border-radius:10px; overflow:hidden; margin-bottom:20px; }
+#progressFill { height:100%; width:0%; background:#00ff85; transition:.3s; }
+.habit { background:#141414; padding:15px; border-radius:12px; display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border:1px solid #00eaff44; }
+.habit span { font-size:18px; }
+button, input { border:none; padding:12px 15px; border-radius:10px; font-size:16px; }
+#addBtn { background:#00ff85; color:black; font-weight:bold; }
+.checkBtn { background:#00eaff; font-weight:bold; }
+input {flex:1; background:#222; color:white; }
+.quote { margin-top:20px; font-style:italic; text-align:center; opacity:.8; font-size:15px; }
+</style>
+</head>
+
+<body>
+
+<h1>Daily Habit Tracker 🔥</h1>
+<div id="progressBar"><div id="progressFill"></div></div>
+
+<div style="display:flex; gap:6px; margin-bottom:15px;">
+<input id="habitInput" type="text" placeholder="Tambah kebiasaan baru...">
+<button id="addBtn" onclick="addHabit()">Tambah</button>
+</div>
+
+<div id="habitList"></div>
+
+<p class="quote" id="quote"></p>
+
+<script>
+let habits = JSON.parse(localStorage.getItem("habits")) || [];
+let today = new Date().toDateString();
+
+if(localStorage.getItem("lastOpen") !== today){
+    habits = habits.map(h => ({...h, done:false}));
+    localStorage.setItem("lastOpen", today);
+}
+
+function render(){
+    const list = document.getElementById("habitList");
+    list.innerHTML = "";
+    habits.forEach((habit, index)=>{
+        list.innerHTML += `
+            <div class='habit'>
+                <span>${habit.name}</span>
+                <button class='checkBtn' onclick="toggle(${index})">${habit.done ? "✔️" : "❌"}</button>
+            </div>`;
+    });
+
+    let doneCount = habits.filter(h => h.done).length;
+    let percent = habits.length ? (doneCount / habits.length * 100) : 0;
+    document.getElementById("progressFill").style.width = percent + "%";
+
+    localStorage.setItem("habits", JSON.stringify(habits));
+}
+
+function addHabit(){
+    const input = document.getElementById("habitInput");
+    if(input.value.trim()==="") return;
+    habits.push({name:input.value, done:false});
+    input.value="";
+    render();
+}
+
+function toggle(index){
+    habits[index].done = !habits[index].done;
+    render();
+}
+
+const quotes = [
+"Small improvements each day lead to big results.",
+"You do not rise to the level of your goals, you fall to your systems.",
+"Habits are the compound interest of self-improvement.",
+"Focus on tiny wins, not perfection.",
+"Be better than yesterday — even 1%."
+];
+
+document.getElementById("quote").innerText = 
+    quotes[Math.floor(Math.random()*quotes.length)];
+
+render();
+</script>
+
+</body>
+</html>
